@@ -1,11 +1,28 @@
+/*
+ * ALL THIS CODE IS A PORT TO C FROM THE GO LINKER.
+ * ORIGINAL CAN BE FOUND HERE: 
+ * PARTS OF THIS CODE WERE MODIFIED TO COMPENSATE FOR
+ * THE C LANGUAGE'S LACK OF OOP FEATURES
+ *
+ * UNDER NO CIRCUMSTANCES AM I LIABLE FOR DAMAGES CAUSED
+ * BY THE SOFTWARE
+*/
+
 #include <stdint.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <openssl/sha.h>
+#include <dirent.h>
+
+#define OPENSSL_SUPPRESS_DEPRECATED
 
 #define PAGE_BITS 12
 #define PAGE_SIZE (1 << PAGE_BITS)
 
 #define LC_CODE_SIGNATURE 0x1d
 
-#define CSMAGIC_REQUIREMENT0xfade0c00
+#define CSMAGIC_REQUIREMENT 0xfade0c00
 #define CSMAGIC_REQUIREMENTS 0xfade0c01
 #define CSMAGIC_CODEDIRECTORY 0xfade0c02
 #define CSMAGIC_EMBEDDED_SIGNATURE 0xfade0cc0
@@ -31,16 +48,16 @@ struct Blob {
   uint32_t offset;
 } typedef Blob;
 
+uint8_t* put8(uint8_t* out, uint8_t value) {
+    *out++ = value;
+    return out;
+}
+
 uint8_t* put32be(uint8_t* out, uint32_t value) {
     *out++ = (value >> 24) & 0xFF;
     *out++ = (value >> 16) & 0xFF;
     *out++ = (value >> 8) & 0xFF;
     *out++ = value & 0xFF;
-    return out;
-}
-
-uint8_t* put8(uint8_t* out, uint8_t value) {
-    *out++ = value;
     return out;
 }
 
@@ -57,7 +74,7 @@ uint8_t* put64be(uint8_t* out, uint64_t value) {
 }
 
 uint8_t* Blob_put(Blob* b, uint8_t* out) {
-    out = put32be(out, b->typ);      // Append b->typ in big-endian format
+    out = put32be(out, b->typ);     // Append b->typ in big-endian format
     out = put32be(out, b->offset);  // Append b->offset in big-endian format
     return out;                     // Return the updated pointer
 }
@@ -137,12 +154,6 @@ struct CodeSignCmd {
   uint32_t dataOffset;
   uint32_t dataSize;
 } typedef CodeSignCmd;
-
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <openssl/sha.h>  // For SHA-256
-#include <dirent.h>
 
 #define HASH_SIZE_32 32
 
@@ -267,7 +278,7 @@ int main(int argc, char* argv[]) {
     // Get the size of the file
     fseek(dataFile, 0, SEEK_END);
     args.codeSize = ftell(dataFile);
-    fseek(dataFile, 0, SEEK_SET);
+    rewind(dataFile);
 
     // Calculate the size of the text section
     args.textOffset = 0;
