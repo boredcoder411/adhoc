@@ -237,58 +237,6 @@ void Sign(SignArgs* args) {
     }
 }
 
-void SignApp(const char* appPath, const char* identifier) {
-    DIR* dir = opendir(appPath);
-    if (!dir) {
-        perror("Failed to open .app directory");
-        exit(EXIT_FAILURE);
-    }
-
-    struct dirent* entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (strstr(entry->d_name, "Mach-O") != NULL) {
-            char filePath[1024];
-            snprintf(filePath, sizeof(filePath), "%s/%s", appPath, entry->d_name);
-
-            FILE* dataFile = fopen(filePath, "rb");
-            if (!dataFile) {
-                perror("Failed to open Mach-O file");
-                closedir(dir);
-                exit(EXIT_FAILURE);
-            }
-
-            fseek(dataFile, 0, SEEK_END);
-            size_t codeSize = ftell(dataFile);
-            rewind(dataFile);
-
-            uint8_t* output = malloc(CalculateSize(codeSize, identifier));
-            if (!output) {
-                perror("Memory allocation failed");
-                fclose(dataFile);
-                closedir(dir);
-                exit(EXIT_FAILURE);
-            }
-
-            SignArgs args = {
-                .output = output,
-                .dataFile = dataFile,
-                .identifier = identifier,
-                .codeSize = codeSize,
-                .textOffset = 0x1000,
-                .textSize = 0x2000,
-                .isMain = 1
-            };
-
-            Sign(&args);
-
-            fclose(dataFile);
-            free(output);
-        }
-    }
-
-    closedir(dir);
-}
-
 int main(int argc, char* argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <app_path> <identifier>\n", argv[0]);
@@ -298,7 +246,56 @@ int main(int argc, char* argv[]) {
     const char* appPath = argv[1];
     const char* identifier = argv[2];
 
-    SignApp(appPath, identifier);
+    SignArgs args = {
+        .output = NULL,
+        .dataFile = NULL,
+        .identifier = identifier,
+        .codeSize = 0,
+        .textOffset = 0,
+        .textSize = 0,
+        .isMain = 1
+    };
+
+    FILE* dataFile = fopen(appPath, "rb");
+    if (dataFile == NULL) {
+        perror("Error opening file");
+        return 1;
+    }
+
+    args.dataFile = dataFile;
+
+    // Get the size of the file
+    fseek(dataFile, 0, SEEK_END);
+    args.codeSize = ftell(dataFile);
+    fseek(dataFile, 0, SEEK_SET);
+
+    // Calculate the size of the text section
+    args.textOffset = 0;
+    args.textSize = args.codeSize;
+
+    // Allocate memory for the output
+    size_t totalSize = CalculateSize(args.codeSize, args.identifier);
+    args.output = malloc(totalSize);
+    if (args.output == NULL) {
+        perror("Error allocating memory");
+        return 1;
+    }
+
+    // Sign the file
+    Sign(&args);
+
+    // Write the output to a file
+    FILE* outputFile = fopen("signature", "wb");
+    if (outputFile == NULL) {
+        perror("Error opening output file");
+        return 1;
+    }
+
+    fwrite(args.output, 1, totalSize, outputFile);
+
+    fclose(outputFile);
+    fclose(dataFile);
+    free(args.output);
 
     return 0;
 }
