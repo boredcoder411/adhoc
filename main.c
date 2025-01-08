@@ -143,13 +143,23 @@ void Sign(SignArgs* args) {
     uint8_t buffer[PAGE_SIZE];
     SHA256_CTX shaCtx;
     size_t readBytes = 0;
+    size_t pageIndex = 0;
     while ((readBytes = fread(buffer, 1, PAGE_SIZE, args->dataFile)) > 0) {
         uint8_t hash[SHA256_DIGEST_LENGTH];
         SHA256_Init(&shaCtx);
         SHA256_Update(&shaCtx, buffer, readBytes);
         SHA256_Final(hash, &shaCtx);
+
+        // Print the hash for the current page
+        printf("Page %zu hash: ", pageIndex);
+        for (size_t i = 0; i < HASH_SIZE_32; i++) {
+            printf("%02x", hash[i]);
+        }
+        printf("\n");
+
         memcpy(ptr, hash, HASH_SIZE_32);
         ptr += HASH_SIZE_32;
+        pageIndex++;
     }
 
     if (ferror(args->dataFile)) {
