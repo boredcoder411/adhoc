@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "constants.h"
+#include "signing/constants.h"
 
 void Debug_CodeDirectory(CodeDirectory* cdir) {
     // Show CodeDirectory information

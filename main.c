@@ -15,7 +15,7 @@
 #include <openssl/sha.h>
 #include <dirent.h>
 
-#include "constants.h"
+#include "signing/constants.h"
 #include "debug.h"
 
 uint8_t* put8(uint8_t* out, uint8_t value) {
