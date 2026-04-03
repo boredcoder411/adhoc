@@ -243,6 +243,7 @@ int main(int argc, char* argv[]) {
     }
 
     CodeSignCmd* csCmd = NULL;
+    load_command* linkeditCmd = NULL;
     size_t minDataFileOff = SIZE_MAX;
     size_t off = loadStart;
     for (uint32_t i = 0; i < ncmds; i++) {
@@ -266,11 +267,17 @@ int main(int argc, char* argv[]) {
             if (seg->fileoff > 0 && seg->fileoff < minDataFileOff) {
                 minDataFileOff = seg->fileoff;
             }
+            if (strncmp(seg->segname, "__LINKEDIT", sizeof(seg->segname)) == 0) {
+                linkeditCmd = lc;
+            }
         }
         if (lc->cmd == LC_SEGMENT_64 && lc->cmdsize >= sizeof(segment_command_64)) {
             segment_command_64* seg = (segment_command_64*)(fileData + off);
             if (seg->fileoff > 0 && seg->fileoff < minDataFileOff) {
                 minDataFileOff = (size_t)seg->fileoff;
+            }
+            if (strncmp(seg->segname, "__LINKEDIT", sizeof(seg->segname)) == 0) {
+                linkeditCmd = lc;
             }
         }
 
@@ -347,6 +354,63 @@ int main(int argc, char* argv[]) {
 
     memcpy(newFile, fileData, newDataOff);
     memcpy(newFile + newDataOff, signArgs.output, sigSize);
+
+    if (linkeditCmd != NULL) {
+        size_t cmdOff = (uint8_t*)linkeditCmd - fileData;
+        load_command* newLinkeditCmd = (load_command*)(newFile + cmdOff);
+        uint64_t newLinkeditSize = 0;
+        uint64_t linkeditVmSize = 0;
+        uint64_t linkeditFileOff = 0;
+        if (newLinkeditCmd->cmd == LC_SEGMENT_64) {
+            segment_command_64* seg = (segment_command_64*)newLinkeditCmd;
+            linkeditFileOff = seg->fileoff;
+            linkeditVmSize = seg->vmsize;
+            if (newFileSize < linkeditFileOff) {
+                fprintf(stderr, "Corrupt Mach-O: __LINKEDIT fileoff beyond file size\n");
+                free(newFile);
+                free(signArgs.output);
+                free(fileData);
+                return 1;
+            }
+            newLinkeditSize = newFileSize - linkeditFileOff;
+            seg->filesize = newLinkeditSize;
+            uint64_t minVmSize = (newLinkeditSize + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+            if (linkeditVmSize < minVmSize) {
+                seg->vmsize = minVmSize;
+            }
+        } else if (newLinkeditCmd->cmd == LC_SEGMENT) {
+            segment_command* seg = (segment_command*)newLinkeditCmd;
+            linkeditFileOff = seg->fileoff;
+            linkeditVmSize = seg->vmsize;
+            if (newFileSize < linkeditFileOff) {
+                fprintf(stderr, "Corrupt Mach-O: __LINKEDIT fileoff beyond file size\n");
+                free(newFile);
+                free(signArgs.output);
+                free(fileData);
+                return 1;
+            }
+            newLinkeditSize = newFileSize - linkeditFileOff;
+            if (newLinkeditSize > UINT32_MAX) {
+                fprintf(stderr, "__LINKEDIT exceeds 32-bit segment size limit\n");
+                free(newFile);
+                free(signArgs.output);
+                free(fileData);
+                return 1;
+            }
+            seg->filesize = (uint32_t)newLinkeditSize;
+            uint64_t minVmSize = (newLinkeditSize + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+            if (linkeditVmSize < minVmSize) {
+                if (minVmSize > UINT32_MAX) {
+                    fprintf(stderr, "__LINKEDIT vmsize exceeds 32-bit segment size limit\n");
+                    free(newFile);
+                    free(signArgs.output);
+                    free(fileData);
+                    return 1;
+                }
+                seg->vmsize = (uint32_t)minVmSize;
+            }
+        }
+    }
 
     if (is64) {
         mach_header_64* hdr = (mach_header_64*)newFile;
