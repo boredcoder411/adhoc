@@ -91,7 +91,7 @@ typedef struct {
 
 typedef struct {
     uint8_t* output;
-    FILE* dataFile;
+    const uint8_t* data;
     const char* identifier;
     size_t codeSize;
     size_t textOffset;
