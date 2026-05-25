@@ -91,10 +91,10 @@ typedef struct {
 
 typedef struct {
     uint8_t* output;
-    FILE* dataFile;
+    const uint8_t* code;
     const char* identifier;
     size_t codeSize;
-    size_t textOffset;
-    size_t textSize;
+    uint64_t execSegBase;
+    uint64_t execSegLimit;
     int isMain;
 } SignArgs;
