@@ -9,15 +9,21 @@ endif
 
 LDLIBS += -lcrypto
 
-all: main
+all: build_dir main
 
-sample: test_unsigned
+build_dir:
+	mkdir build
 
 main: main.c macho/constants.h signing/constants.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) main.c -o main $(LDFLAGS) $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) main.c -o build/main $(LDFLAGS) $(LDLIBS)
 
-test_unsigned: test.c
-	$(CC) test.c -o test_unsigned -Wl,-no_adhoc_codesign
+test: build_dir main test.c
+	$(CC) test.c -o build/test
+	codesign --remove-signature build/test
+	./build/main build/test "com.example.test" build/test_signed
+	codesign -dvvv build/test_signed
 
 clean:
-	rm -f main signature test_signed test_resigned apple_signed
+	rm -rf build
+
+.PHONY: all clean main build_dir
