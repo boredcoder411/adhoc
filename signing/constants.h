@@ -1,7 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#ifndef ADHOC_SIGNER_WASM
 #include <openssl/sha.h>
+#endif
 #include <stdio.h>
 
 #define OPENSSL_SUPPRESS_DEPRECATED
