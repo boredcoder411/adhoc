@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ad-hoc Mach-O Signer</title>
+    <style>
+        :root {
+            color-scheme: light;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #f5f7fb;
+            color: #182033;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 32px;
+        }
+
+        main {
+            width: min(560px, 100%);
+            background: #ffffff;
+            border: 1px solid #d8dfeb;
+            border-radius: 8px;
+            box-shadow: 0 18px 50px rgba(24, 32, 51, 0.08);
+            padding: 28px;
+        }
+
+        h1 {
+            margin: 0 0 22px;
+            font-size: 24px;
+            line-height: 1.2;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 650;
+            color: #3d4659;
+        }
+
+        input {
+            width: 100%;
+            min-height: 42px;
+            border: 1px solid #c5cedd;
+            border-radius: 6px;
+            background: #ffffff;
+            color: inherit;
+            font: inherit;
+        }
+
+        input[type="text"] {
+            padding: 0 12px;
+        }
+
+        input[type="file"] {
+            padding: 8px;
+        }
+
+        .field {
+            margin-bottom: 18px;
+        }
+
+        .actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        button,
+        a.download {
+            min-height: 42px;
+            border: 0;
+            border-radius: 6px;
+            padding: 0 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font: inherit;
+            font-weight: 700;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        button {
+            background: #176b5b;
+            color: #ffffff;
+        }
+
+        button:disabled {
+            background: #a8b2c3;
+            cursor: not-allowed;
+        }
+
+        a.download {
+            background: #edf2f7;
+            color: #182033;
+        }
+
+        a.download[hidden],
+        #postSign[hidden] {
+            display: none;
+        }
+
+        #status {
+            min-height: 22px;
+            margin: 18px 0 0;
+            color: #586376;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        #status.error {
+            color: #a33131;
+        }
+
+        #postSign {
+            margin: 14px 0 0;
+            padding: 12px;
+            border-radius: 6px;
+            background: #f7fafc;
+            border: 1px solid #d8dfeb;
+            color: #3d4659;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+
+        code {
+            display: block;
+            margin-top: 8px;
+            padding: 8px;
+            overflow-x: auto;
+            border-radius: 5px;
+            background: #182033;
+            color: #ffffff;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Ad-hoc Mach-O Signer</h1>
+
+        <div class="field">
+            <label for="bin">Mach-O executable</label>
+            <input type="file" name="bin" id="bin">
+        </div>
+
+        <div class="field">
+            <label for="identifier">Code signature identifier</label>
+            <input type="text" id="identifier" value="com.example.app" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="actions">
+            <button type="button" id="sign" disabled>Sign</button>
+            <a class="download" id="download" hidden>Download signed file</a>
+        </div>
+
+        <p id="status">Loading signer...</p>
+        <p id="postSign" hidden>
+            macOS may quarantine browser downloads. If the signed file exits immediately or is killed, remove the quarantine attribute after downloading:
+            <code id="postSignCommand"></code>
+        </p>
+    </main>
+
+    <script type="module">
+        import createSignerModule from "./adhoc_signer.js";
+
+        const fileInput = document.querySelector("#bin");
+        const identifierInput = document.querySelector("#identifier");
+        const signButton = document.querySelector("#sign");
+        const downloadLink = document.querySelector("#download");
+        const status = document.querySelector("#status");
+        const postSign = document.querySelector("#postSign");
+        const postSignCommand = document.querySelector("#postSignCommand");
+
+        let signer = null;
+        let signedUrl = null;
+
+        function setStatus(message, isError = false) {
+            status.textContent = message;
+            status.classList.toggle("error", isError);
+        }
+
+        function updateButton() {
+            signButton.disabled = !signer || !fileInput.files.length || !identifierInput.value.trim();
+        }
+
+        function clearDownload() {
+            if (signedUrl) {
+                URL.revokeObjectURL(signedUrl);
+                signedUrl = null;
+            }
+            downloadLink.hidden = true;
+            downloadLink.removeAttribute("href");
+            downloadLink.removeAttribute("download");
+            postSign.hidden = true;
+            postSignCommand.textContent = "";
+        }
+
+        function copyStringToHeap(text) {
+            const bytes = new TextEncoder().encode(`${text}\0`);
+            const ptr = signer._malloc(bytes.length);
+            if (!ptr) {
+                throw new Error("Unable to allocate identifier memory");
+            }
+            signer.HEAPU8.set(bytes, ptr);
+            return ptr;
+        }
+
+        function signBytes(inputBytes, identifier) {
+            let inputPtr = 0;
+            let identifierPtr = 0;
+            let outputSizePtr = 0;
+            let outputPtr = 0;
+
+            try {
+                inputPtr = signer._malloc(inputBytes.length);
+                identifierPtr = copyStringToHeap(identifier);
+                outputSizePtr = signer._malloc(4);
+
+                if (!inputPtr || !outputSizePtr) {
+                    throw new Error("Unable to allocate WASM memory");
+                }
+
+                signer.HEAPU8.set(inputBytes, inputPtr);
+                signer.HEAPU32[outputSizePtr >> 2] = 0;
+
+                outputPtr = signer._sign_macho_wasm(
+                    inputPtr,
+                    inputBytes.length,
+                    identifierPtr,
+                    outputSizePtr
+                );
+
+                if (!outputPtr) {
+                    throw new Error("Signing failed. Make sure the file is a 64-bit little-endian Mach-O executable with enough header padding.");
+                }
+
+                const outputSize = signer.HEAPU32[outputSizePtr >> 2];
+                return signer.HEAPU8.slice(outputPtr, outputPtr + outputSize);
+            } finally {
+                if (outputPtr) {
+                    signer._free(outputPtr);
+                }
+                if (inputPtr) {
+                    signer._free(inputPtr);
+                }
+                if (identifierPtr) {
+                    signer._free(identifierPtr);
+                }
+                if (outputSizePtr) {
+                    signer._free(outputSizePtr);
+                }
+            }
+        }
+
+        fileInput.addEventListener("change", () => {
+            clearDownload();
+            updateButton();
+            if (fileInput.files.length) {
+                setStatus(`${fileInput.files[0].name} selected.`);
+            }
+        });
+
+        identifierInput.addEventListener("input", () => {
+            clearDownload();
+            updateButton();
+        });
+
+        signButton.addEventListener("click", async () => {
+            const file = fileInput.files[0];
+            const identifier = identifierInput.value.trim();
+            if (!file || !identifier) {
+                updateButton();
+                return;
+            }
+
+            clearDownload();
+            signButton.disabled = true;
+            setStatus("Signing...");
+
+            try {
+                const inputBytes = new Uint8Array(await file.arrayBuffer());
+                const signedBytes = signBytes(inputBytes, identifier);
+                const blob = new Blob([signedBytes], { type: "application/octet-stream" });
+                signedUrl = URL.createObjectURL(blob);
+
+                downloadLink.href = signedUrl;
+                downloadLink.download = `${file.name}_signed`;
+                downloadLink.hidden = false;
+                postSignCommand.textContent = `xattr -d com.apple.quarantine ~/Downloads/${downloadLink.download}`;
+                postSign.hidden = false;
+                setStatus(`Signed ${file.name}.`);
+            } catch (error) {
+                setStatus(error instanceof Error ? error.message : String(error), true);
+            } finally {
+                updateButton();
+            }
+        });
+
+        try {
+            signer = await createSignerModule({
+                locateFile: (path) => new URL(path, import.meta.url).href,
+                printErr: (message) => console.warn(message),
+            });
+            setStatus("Signer ready.");
+            updateButton();
+        } catch (error) {
+            setStatus(`Failed to load WASM signer: ${error instanceof Error ? error.message : String(error)}`, true);
+        }
+    </script>
+</body>
+</html>

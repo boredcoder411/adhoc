@@ -1,5 +1,6 @@
 CC ?= cc
 EMCC ?= emcc
+WEB_DIR ?= web
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
 WASM_CFLAGS ?= -std=c11 -Wall -Wextra -O3 -DADHOC_SIGNER_WASM
 WASM_LDFLAGS ?= \
@@ -8,7 +9,6 @@ WASM_LDFLAGS ?= \
 	-sENVIRONMENT=web,worker \
 	-sFILESYSTEM=0 \
 	-sALLOW_MEMORY_GROWTH=1 \
-	-sMINIFY_WASM_IMPORTS_AND_EXPORTS=0 \
 	--no-entry \
 	-sEXPORTED_FUNCTIONS='["_malloc","_free","_sign_macho_wasm"]'
 OPENSSL_PREFIX ?= $(shell brew --prefix openssl@3 2>/dev/null)
@@ -29,7 +29,8 @@ main: main.c macho/constants.h signing/constants.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) main.c -o build/main $(LDFLAGS) $(LDLIBS)
 
 wasm: build_dir main.c macho/constants.h signing/constants.h
-	$(EMCC) $(WASM_CFLAGS) main.c -o build/adhoc_signer.js $(WASM_LDFLAGS)
+	$(EMCC) $(WASM_CFLAGS) main.c -o build/adhoc_signer.emcc.js $(WASM_LDFLAGS)
+	cp build/adhoc_signer.emcc.wasm $(WEB_DIR)/adhoc_signer.wasm
 
 test: build_dir main test.c
 	$(CC) test.c -o build/test
