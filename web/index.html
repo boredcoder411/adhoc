@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ad-hoc Mach-O Signer</title>
+    <style>
+        :root {
+            color-scheme: light;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #f5f7fb;
+            color: #182033;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 32px;
+        }
+
+        main {
+            width: min(560px, 100%);
+            background: #ffffff;
+            border: 1px solid #d8dfeb;
+            border-radius: 8px;
+            box-shadow: 0 18px 50px rgba(24, 32, 51, 0.08);
+            padding: 28px;
+        }
+
+        h1 {
+            margin: 0 0 22px;
+            font-size: 24px;
+            line-height: 1.2;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 650;
+            color: #3d4659;
+        }
+
+        input {
+            width: 100%;
+            min-height: 42px;
+            border: 1px solid #c5cedd;
+            border-radius: 6px;
+            background: #ffffff;
+            color: inherit;
+            font: inherit;
+        }
+
+        input[type="text"] {
+            padding: 0 12px;
+        }
+
+        input[type="file"] {
+            padding: 8px;
+        }
+
+        .mode-switch {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: fit-content;
+            margin: 0 0 22px;
+            color: #3d4659;
+            font-size: 14px;
+            font-weight: 650;
+            cursor: pointer;
+        }
+
+        .mode-switch input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+        }
+
+        .switch-track {
+            position: relative;
+            width: 42px;
+            height: 24px;
+            border-radius: 12px;
+            background: #a8b2c3;
+            transition: background 120ms ease;
+        }
+
+        .switch-track::after {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ffffff;
+            content: "";
+            transition: transform 120ms ease;
+        }
+
+        .mode-switch input:checked + .switch-track {
+            background: #176b5b;
+        }
+
+        .mode-switch input:checked + .switch-track::after {
+            transform: translateX(18px);
+        }
+
+        .mode-switch input:focus-visible + .switch-track {
+            outline: 3px solid #7aa99f;
+            outline-offset: 2px;
+        }
+
+        .mode-switch input:disabled + .switch-track {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .field {
+            margin-bottom: 18px;
+        }
+
+        .hint {
+            margin: -6px 0 18px;
+            color: #586376;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        button,
+        a.download {
+            min-height: 42px;
+            border: 0;
+            border-radius: 6px;
+            padding: 0 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font: inherit;
+            font-weight: 700;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        button {
+            background: #176b5b;
+            color: #ffffff;
+        }
+
+        button:disabled {
+            background: #a8b2c3;
+            cursor: not-allowed;
+        }
+
+        a.download {
+            background: #edf2f7;
+            color: #182033;
+        }
+
+        a.download[hidden],
+        #postSign[hidden] {
+            display: none;
+        }
+
+        #status {
+            min-height: 22px;
+            margin: 18px 0 0;
+            color: #586376;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        #status.error {
+            color: #a33131;
+        }
+
+        #postSign {
+            margin: 14px 0 0;
+            padding: 12px;
+            border-radius: 6px;
+            background: #f7fafc;
+            border: 1px solid #d8dfeb;
+            color: #3d4659;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+
+        code {
+            display: block;
+            margin-top: 8px;
+            padding: 8px;
+            overflow-x: auto;
+            border-radius: 5px;
+            background: #182033;
+            color: #ffffff;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Ad-hoc Mach-O Signer</h1>
+
+        <label class="mode-switch" for="certMode">
+            <span>Ad-hoc</span>
+            <input type="checkbox" id="certMode" role="switch" aria-label="Certificate signing mode">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>Certificate</span>
+        </label>
+
+        <div class="field">
+            <label for="bin">Mach-O executable</label>
+            <input type="file" name="bin" id="bin">
+        </div>
+
+        <div class="field">
+            <label for="identifier">Code signature identifier</label>
+            <input type="text" id="identifier" value="com.example.app" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div id="certificateFields" hidden>
+            <div class="field">
+                <label for="p12">PKCS#12 signing identity (.p12 or .pfx)</label>
+                <input type="file" id="p12" accept=".p12,.pfx,application/x-pkcs12">
+            </div>
+
+            <div class="field">
+                <label for="p12Password">PKCS#12 password</label>
+                <input type="password" id="p12Password" autocomplete="new-password">
+            </div>
+
+            <div class="field">
+                <label for="teamID">Team ID (optional; defaults to the certificate subject OU)</label>
+                <input type="text" id="teamID" autocomplete="off" spellcheck="false">
+            </div>
+
+            <div class="field">
+                <label for="entitlements">Entitlements plist (optional XML)</label>
+                <input type="file" id="entitlements" accept=".plist,.xml,application/xml,text/xml">
+            </div>
+            <p class="hint">The PKCS#12 file and its password are processed locally in your browser.</p>
+        </div>
+
+        <div class="actions">
+            <button type="button" id="sign" disabled>Sign</button>
+            <a class="download" id="download" hidden>Download signed file</a>
+        </div>
+
+        <p id="status">Loading signer...</p>
+        <p id="postSign" hidden>
+            macOS may quarantine browser downloads. If the signed file exits immediately or is killed, remove the quarantine attribute after downloading:
+            <code id="postSignCommand"></code>
+        </p>
+    </main>
+
+    <script type="module">
+        import createSignerModule from "./adhoc_signer.js";
+
+        const fileInput = document.querySelector("#bin");
+        const identifierInput = document.querySelector("#identifier");
+        const certModeInput = document.querySelector("#certMode");
+        const certificateFields = document.querySelector("#certificateFields");
+        const p12Input = document.querySelector("#p12");
+        const p12PasswordInput = document.querySelector("#p12Password");
+        const teamIDInput = document.querySelector("#teamID");
+        const entitlementsInput = document.querySelector("#entitlements");
+        const signButton = document.querySelector("#sign");
+        const downloadLink = document.querySelector("#download");
+        const status = document.querySelector("#status");
+        const postSign = document.querySelector("#postSign");
+        const postSignCommand = document.querySelector("#postSignCommand");
+
+        let signer = null;
+        let signedUrl = null;
+        let wasmErrors = [];
+        let isSigning = false;
+
+        function setStatus(message, isError = false) {
+            status.textContent = message;
+            status.classList.toggle("error", isError);
+        }
+
+        function updateButton() {
+            const needsCertificate = certModeInput.checked;
+            certificateFields.hidden = !needsCertificate;
+            signButton.disabled = isSigning || !signer || !fileInput.files.length ||
+                !identifierInput.value.trim() ||
+                (needsCertificate && !p12Input.files.length);
+        }
+
+        function clearDownload() {
+            if (signedUrl) {
+                URL.revokeObjectURL(signedUrl);
+                signedUrl = null;
+            }
+            downloadLink.hidden = true;
+            downloadLink.removeAttribute("href");
+            downloadLink.removeAttribute("download");
+            postSign.hidden = true;
+            postSignCommand.textContent = "";
+        }
+
+        function signBytes(inputBytes, identifier, certificate = null) {
+            const allocations = [];
+            let outputPtr = 0;
+
+            try {
+                function copyToHeap(bytes, description) {
+                    if (!bytes?.length) {
+                        return 0;
+                    }
+                    const ptr = signer._malloc(bytes.length);
+                    if (!ptr) {
+                        throw new Error(`Unable to allocate ${description} memory`);
+                    }
+                    allocations.push(ptr);
+                    signer.HEAPU8.set(bytes, ptr);
+                    return ptr;
+                }
+
+                function copyStringToHeap(text, description) {
+                    if (!text) {
+                        return 0;
+                    }
+                    return copyToHeap(new TextEncoder().encode(`${text}\0`), description);
+                }
+
+                const inputPtr = copyToHeap(inputBytes, "input");
+                const identifierPtr = copyStringToHeap(identifier, "identifier");
+                const outputSizePtr = copyToHeap(new Uint8Array(4), "output size");
+
+                if (certificate) {
+                    const p12Ptr = copyToHeap(certificate.p12, "PKCS#12");
+                    const passwordPtr = copyStringToHeap(certificate.password, "password");
+                    const teamIDPtr = copyStringToHeap(certificate.teamID, "Team ID");
+                    const entitlementsPtr = copyToHeap(certificate.entitlements, "entitlements");
+                    signer.HEAPU32[outputSizePtr >> 2] = 0;
+                    outputPtr = signer._sign_macho_wasm_cert(
+                        inputPtr,
+                        inputBytes.length,
+                        identifierPtr,
+                        p12Ptr,
+                        certificate.p12.length,
+                        passwordPtr,
+                        teamIDPtr,
+                        entitlementsPtr,
+                        certificate.entitlements?.length || 0,
+                        outputSizePtr
+                    );
+                } else {
+                    signer.HEAPU32[outputSizePtr >> 2] = 0;
+                    outputPtr = signer._sign_macho_wasm_adhoc(
+                        inputPtr,
+                        inputBytes.length,
+                        identifierPtr,
+                        outputSizePtr
+                    );
+                }
+
+                if (!outputPtr) {
+                    const details = wasmErrors.at(-1);
+                    throw new Error(details ||
+                        "Signing failed. Make sure the file is a 64-bit little-endian Mach-O executable with enough header padding.");
+                }
+
+                const outputSize = signer.HEAPU32[outputSizePtr >> 2];
+                return signer.HEAPU8.slice(outputPtr, outputPtr + outputSize);
+            } finally {
+                if (outputPtr) {
+                    signer._free(outputPtr);
+                }
+                allocations.forEach((ptr) => signer._free(ptr));
+            }
+        }
+
+        function clearOutputOnChange() {
+            clearDownload();
+            updateButton();
+        }
+
+        fileInput.addEventListener("change", () => {
+            clearOutputOnChange();
+            if (fileInput.files.length) {
+                setStatus(`${fileInput.files[0].name} selected.`);
+            }
+        });
+
+        [identifierInput, certModeInput, p12Input, p12PasswordInput, teamIDInput, entitlementsInput]
+            .forEach((control) => control.addEventListener("input", clearOutputOnChange));
+        [certModeInput, p12Input, entitlementsInput]
+            .forEach((control) => control.addEventListener("change", clearOutputOnChange));
+
+        signButton.addEventListener("click", async () => {
+            const file = fileInput.files[0];
+            const identifier = identifierInput.value.trim();
+            const certificateMode = certModeInput.checked;
+            const p12File = p12Input.files[0];
+            const p12Password = p12PasswordInput.value;
+            const teamID = teamIDInput.value.trim();
+            const entitlementsFile = entitlementsInput.files[0];
+            if (!file || !identifier || (certificateMode && !p12File)) {
+                updateButton();
+                return;
+            }
+
+            clearDownload();
+            wasmErrors = [];
+            isSigning = true;
+            signButton.disabled = true;
+            setStatus("Signing...");
+
+            try {
+                const inputBytes = new Uint8Array(await file.arrayBuffer());
+                let certificate = null;
+                if (certificateMode) {
+                    const p12 = new Uint8Array(await p12File.arrayBuffer());
+                    if (!p12.length) {
+                        throw new Error("The selected PKCS#12 file is empty.");
+                    }
+                    const entitlements = entitlementsFile
+                        ? new Uint8Array(await entitlementsFile.arrayBuffer())
+                        : null;
+                    certificate = {
+                        p12,
+                        password: p12Password,
+                        teamID,
+                        entitlements,
+                    };
+                }
+                const signedBytes = signBytes(inputBytes, identifier, certificate);
+                const blob = new Blob([signedBytes], { type: "application/octet-stream" });
+                signedUrl = URL.createObjectURL(blob);
+
+                downloadLink.href = signedUrl;
+                downloadLink.download = `${file.name}_signed`;
+                downloadLink.hidden = false;
+                postSignCommand.textContent = `xattr -d com.apple.quarantine ~/Downloads/${downloadLink.download}`;
+                postSign.hidden = false;
+                setStatus(`Signed ${file.name}.`);
+            } catch (error) {
+                setStatus(error instanceof Error ? error.message : String(error), true);
+            } finally {
+                isSigning = false;
+                updateButton();
+            }
+        });
+
+        try {
+            signer = await createSignerModule({
+                locateFile: (path) => new URL(path, import.meta.url).href,
+                printErr: (message) => {
+                    wasmErrors.push(message);
+                    console.warn(message);
+                },
+            });
+            setStatus("Signer ready.");
+            updateButton();
+        } catch (error) {
+            setStatus(`Failed to load WASM signer: ${error instanceof Error ? error.message : String(error)}`, true);
+        }
+    </script>
+</body>
+</html>

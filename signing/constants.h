@@ -1,7 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#ifndef ADHOC_SIGNER_WASM
 #include <openssl/sha.h>
+#endif
 #include <stdio.h>
 
 #define OPENSSL_SUPPRESS_DEPRECATED
@@ -16,8 +18,27 @@
 #define CSMAGIC_CODEDIRECTORY 0xfade0c02
 #define CSMAGIC_EMBEDDED_SIGNATURE 0xfade0cc0
 #define CSMAGIC_DETACHED_SIGNATURE 0xfade0cc1
+#define CSMAGIC_BLOBWRAPPER 0xfade0b01
+#define CSMAGIC_EMBEDDED_ENTITLEMENTS 0xfade7171
 
 #define CSSLOT_CODEDIRECTORY 0
+#define CSSLOT_REQUIREMENTS 2
+#define CSSLOT_ENTITLEMENTS 5
+#define CSSLOT_SIGNATURESLOT 0x10000
+
+// Requirements set item type for the designated requirement.
+#define CS_REQ_TYPE_DESIGNATED 3
+
+// Requirement expression opcodes (requirement language bytecode).
+#define OP_IDENT 2
+#define OP_ANCHOR_HASH 4
+#define OP_AND 6
+#define OP_CERT_FIELD 11
+
+#define MATCH_CONTAINS 1
+
+#define CERT_SLOT_LEAF 0
+#define CERT_SLOT_ANCHOR (-1)
 
 #define CS_HASHTYPE_SHA1 1
 #define CS_HASHTYPE_SHA256 2
