@@ -32,8 +32,8 @@ all: build_dir main
 build_dir:
 	mkdir -p build
 
-main: build_dir main.c signing/identity.c signing/identity.h macho/constants.h signing/constants.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) main.c signing/identity.c -o build/main $(LDFLAGS) $(LDLIBS)
+main: build_dir main.c signing/identity.c signing/identity.h signing/apple_ca.c signing/apple_ca.h macho/constants.h signing/constants.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) main.c signing/identity.c signing/apple_ca.c -o build/main $(LDFLAGS) $(LDLIBS)
 
 $(WASM_OPENSSL_ARCHIVE):
 	mkdir -p build
@@ -54,9 +54,9 @@ $(WASM_OPENSSL_PREFIX)/lib/libcrypto.a: $(WASM_OPENSSL_SOURCE)/.unpacked
 
 wasm-openssl: $(WASM_OPENSSL_PREFIX)/lib/libcrypto.a
 
-wasm: build_dir wasm-openssl main.c signing/identity.c signing/identity.h macho/constants.h signing/constants.h
+wasm: build_dir wasm-openssl main.c signing/identity.c signing/identity.h signing/apple_ca.c signing/apple_ca.h macho/constants.h signing/constants.h
 	mkdir -p $(WEB_DIR)
-	$(EMCC) $(WASM_CPPFLAGS) $(WASM_CFLAGS) -I$(WASM_OPENSSL_PREFIX)/include main.c signing/identity.c \
+	$(EMCC) $(WASM_CPPFLAGS) $(WASM_CFLAGS) -I$(WASM_OPENSSL_PREFIX)/include main.c signing/identity.c signing/apple_ca.c \
 		-L$(WASM_OPENSSL_PREFIX)/lib -lcrypto -o $(WEB_DIR)/adhoc_signer.js $(WASM_LDFLAGS)
 
 test: build_dir main test.c

@@ -5,10 +5,14 @@
 #include <openssl/bio.h>
 #include <openssl/cms.h>
 #include <openssl/err.h>
+#include <openssl/pem.h>
 #include <openssl/pkcs12.h>
+#include <openssl/provider.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "identity.h"
+#include "apple_ca.h"
 
 #define CSMAGIC_BLOBWRAPPER 0xfade0b01
 
@@ -31,6 +35,31 @@ static void write32be(uint8_t* out, uint32_t value) {
     out[3] = (uint8_t)value;
 }
 
+// Certificates exported by older tools use RC2-40-CBC, which OpenSSL 3 moved to
+// the legacy provider. Load it on demand so those PKCS#12 files keep working
+// without forcing every caller to pay for it up front. Providers loaded here are
+// intentionally never unloaded: the parsed key and certificate may still refer
+// to algorithms registered by the provider.
+static int load_legacy_provider(void) {
+    static int available = -1;
+    if (available >= 0) {
+        return available;
+    }
+    ERR_clear_error();
+    available = OSSL_PROVIDER_load(NULL, "legacy") != NULL;
+    return available;
+}
+
+static int p12_parse(PKCS12* p12, const char* password, SignerIdentity* identity) {
+    return PKCS12_parse(p12, password, (EVP_PKEY**)&identity->key, (X509**)&identity->cert,
+                        (STACK_OF(X509)**)&identity->chain);
+}
+
+static int is_wrong_password(unsigned long code) {
+    return ERR_GET_LIB(code) == ERR_LIB_PKCS12 &&
+           ERR_GET_REASON(code) == PKCS12_R_MAC_VERIFY_FAILURE;
+}
+
 int identity_load_p12(SignerIdentity* identity, const uint8_t* data, size_t size,
                       const char* password, char* error, size_t errorSize) {
     memset(identity, 0, sizeof(*identity));
@@ -42,11 +71,38 @@ int identity_load_p12(SignerIdentity* identity, const uint8_t* data, size_t size
         return -1;
     }
 
-    if (PKCS12_parse(p12, password, (EVP_PKEY**)&identity->key, (X509**)&identity->cert,
-                     (STACK_OF(X509)**)&identity->chain) != 1) {
-        set_error(error, errorSize, "failed to parse PKCS#12 (wrong password?)");
-        PKCS12_free(p12);
-        return -1;
+    ERR_clear_error();
+    if (p12_parse(p12, password, identity) != 1) {
+        unsigned long code = ERR_peek_last_error();
+        if (is_wrong_password(code)) {
+            snprintf(error, errorSize, "failed to parse PKCS#12: wrong password");
+            PKCS12_free(p12);
+            return -1;
+        }
+
+        // Most likely an unsupported legacy cipher such as RC2-40-CBC. Retry
+        // with the legacy provider enabled before giving up.
+        identity_free(identity);
+        ERR_clear_error();
+        if (!load_legacy_provider()) {
+            set_error(error, errorSize,
+                      "failed to parse PKCS#12 (unsupported encryption; this OpenSSL "
+                      "build cannot load the legacy provider)");
+            PKCS12_free(p12);
+            return -1;
+        }
+
+        if (p12_parse(p12, password, identity) != 1) {
+            code = ERR_peek_last_error();
+            if (is_wrong_password(code)) {
+                snprintf(error, errorSize, "failed to parse PKCS#12: wrong password");
+            } else {
+                set_error(error, errorSize, "failed to parse PKCS#12");
+            }
+            identity_free(identity);
+            PKCS12_free(p12);
+            return -1;
+        }
     }
     PKCS12_free(p12);
 
@@ -79,6 +135,111 @@ int identity_load_p12(SignerIdentity* identity, const uint8_t* data, size_t size
     }
 
     X509_digest((X509*)identity->cert, EVP_sha1(), identity->certSha1, NULL);
+    return 0;
+}
+
+int identity_has_issuer(const SignerIdentity* identity) {
+    X509* certificate = (X509*)identity->cert;
+    if (certificate == NULL) {
+        return 0;
+    }
+    // A self-signed certificate is its own issuer and needs no chain entry.
+    if (X509_check_issued(certificate, certificate) == X509_V_OK) {
+        return 1;
+    }
+    STACK_OF(X509)* chain = (STACK_OF(X509)*)identity->chain;
+    for (int i = 0; chain != NULL && i < sk_X509_num(chain); i++) {
+        if (X509_check_issued(sk_X509_value(chain, i), certificate) == X509_V_OK) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static X509* parse_pem_certificate(const char* pem) {
+    BIO* bio = BIO_new_mem_buf(pem, -1);
+    if (bio == NULL) {
+        return NULL;
+    }
+    X509* certificate = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    return certificate;
+}
+
+static int chain_contains_certificate(STACK_OF(X509)* chain, X509* certificate) {
+    for (int i = 0; chain != NULL && i < sk_X509_num(chain); i++) {
+        if (X509_cmp(sk_X509_value(chain, i), certificate) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int append_chain_certificate(SignerIdentity* identity, X509* certificate) {
+    if (identity->chain == NULL) {
+        identity->chain = sk_X509_new_null();
+    }
+    if (identity->chain == NULL ||
+        sk_X509_push((STACK_OF(X509)*)identity->chain, certificate) == 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int identity_complete_apple_chain(SignerIdentity* identity) {
+    X509* leaf = (X509*)identity->cert;
+    if (leaf == NULL) {
+        return -1;
+    }
+
+    if (!identity_has_issuer(identity)) {
+        for (size_t i = 0; i < appleCAIntermediatePEMCount; i++) {
+            X509* candidate = parse_pem_certificate(appleCAIntermediatePEMs[i]);
+            if (candidate == NULL) {
+                continue;
+            }
+            if (X509_check_issued(candidate, leaf) != X509_V_OK) {
+                X509_free(candidate);
+                continue;
+            }
+            if (append_chain_certificate(identity, candidate) != 0) {
+                X509_free(candidate);
+                return -1;
+            }
+            break;
+        }
+        if (!identity_has_issuer(identity)) {
+            return -1;
+        }
+    }
+
+    // Match Apple's codesign output by also embedding the root that issued a
+    // member of the chain. Some verifiers stop at the system trust store, but
+    // including it keeps the CMS self-contained.
+    for (size_t i = 0; i < appleCARootPEMCount; i++) {
+        X509* root = parse_pem_certificate(appleCARootPEMs[i]);
+        if (root == NULL) {
+            continue;
+        }
+
+        int issuedChainMember = 0;
+        STACK_OF(X509)* chain = (STACK_OF(X509)*)identity->chain;
+        for (int j = 0; chain != NULL && j < sk_X509_num(chain); j++) {
+            if (X509_check_issued(root, sk_X509_value(chain, j)) == X509_V_OK) {
+                issuedChainMember = 1;
+                break;
+            }
+        }
+
+        if (!issuedChainMember || chain_contains_certificate(chain, root)) {
+            X509_free(root);
+            continue;
+        }
+        if (append_chain_certificate(identity, root) != 0) {
+            X509_free(root);
+            return -1;
+        }
+    }
     return 0;
 }
 

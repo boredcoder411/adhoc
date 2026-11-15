@@ -22,6 +22,16 @@ typedef struct {
 int identity_load_p12(SignerIdentity* identity, const uint8_t* data, size_t size,
                       const char* password, char* error, size_t errorSize);
 
+// Returns 1 when the leaf certificate is self-signed or one of the chain
+// certificates issued it. A leaf-only Apple-issued identity returns 0.
+int identity_has_issuer(const SignerIdentity* identity);
+
+// Completes the chain for an Apple-issued identity: if no chain certificate
+// issued the leaf, adds the matching embedded WWDR intermediate, then appends
+// the Apple root that issued a chain member (unless already present).
+// Returns 0 when the identity has an issuer, -1 otherwise.
+int identity_complete_apple_chain(SignerIdentity* identity);
+
 void identity_free(SignerIdentity* identity);
 
 // Signs data (typically the CodeDirectory) with the identity's key as a detached

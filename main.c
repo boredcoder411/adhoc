@@ -731,6 +731,25 @@ static int sign_macho_data(const uint8_t* input, size_t inputSize, const char* i
             meta.teamID = identity.teamID;
         }
 
+        // A PKCS#12 often contains only the leaf. Fill in the intermediate from
+        // the embedded Apple CA set so signing works without a system keychain,
+        // which is required in WASM.
+        if (identity.appleIssued) {
+            identity_complete_apple_chain(&identity);
+        }
+
+        // macOS kills processes whose signature claims a team ID it cannot
+        // authenticate, so refuse to create a signature that cannot run.
+        if (meta.teamID != NULL && !identity_has_issuer(&identity)) {
+            fprintf(stderr,
+                    "error: signing with team ID '%s' requires the certificate chain, "
+                    "but no issuer was found in the PKCS#12 or the embedded Apple CA "
+                    "certificates.\n"
+                    "Re-export the PKCS#12 with its intermediate certificate.\n",
+                    meta.teamID);
+            goto cleanup;
+        }
+
         size_t requirementsLen = 0;
         requirements = build_requirements_blob(identifier, &identity, meta.teamID,
                                                &requirementsLen);
