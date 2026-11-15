@@ -1,2 +1,3 @@
 build/
 **.wasm
+test.p12
